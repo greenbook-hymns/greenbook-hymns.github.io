@@ -31,6 +31,21 @@ header button{background:rgba(255,255,255,.15);color:#fff;border:0;border-radius
 .pad button:active{background:#e6e1d6}
 .pad .go{background:var(--g);color:#fff;font-weight:700}
 .pad .go:active{background:var(--g2)}
+.search{width:100%;position:relative}
+.search input{width:100%;font-size:18px;padding:14px 44px 14px 44px;border-radius:12px;border:2px solid #cfc8b8;background:#fff;color:var(--ink);outline:none;-webkit-appearance:none;appearance:none}
+.search input:focus{border-color:var(--g)}
+.search input::-webkit-search-cancel-button,.search input::-webkit-search-decoration{-webkit-appearance:none;display:none}
+.search svg{position:absolute;left:14px;top:50%;transform:translateY(-50%)}
+.search .clr{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;font-size:22px;color:#999;padding:6px 10px;display:none}
+.searching .search .clr{display:block}
+.searching #disp,.searching #hint,.searching #pad{display:none}
+.results{width:100%;display:none;flex-direction:column;gap:8px}
+.searching .results{display:flex}
+.res{display:flex;gap:12px;align-items:flex-start;text-align:left;border:0;background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 2px rgba(0,0,0,.12);font-size:16px;color:var(--ink);width:100%}
+.res .num{flex:none;min-width:48px;text-align:center;background:var(--g);color:#fff;border-radius:8px;padding:6px 4px;font-weight:700;font-size:18px}
+.res .ln{line-height:1.35}
+.res mark{background:#e3efe6;color:var(--g);font-weight:700;border-radius:3px;padding:0 1px}
+.rmsg{color:var(--mut);text-align:center;padding:16px 8px;font-size:15px}
 .setup p{line-height:1.5;margin:0}
 .big{display:block;width:100%;text-align:center;background:var(--g);color:#fff;border-radius:12px;padding:16px;font-size:18px;font-weight:600}
 input[type=file]{display:none}
@@ -65,7 +80,9 @@ input[type=file]{display:none}
 
 <section id="find" class="screen">
   <header><h1>Green Book</h1><button id="changeBtn" type="button">PDF</button></header>
-  <div class="wrap">
+  <div class="wrap" id="findWrap">
+    <div class="search"><svg width="18" height="18" viewBox="0 0 20 20"><circle cx="8.5" cy="8.5" r="6.5" stroke="#888" stroke-width="2.2" fill="none"/><path d="M13.5 13.5L18 18" stroke="#888" stroke-width="2.2" stroke-linecap="round"/></svg><input id="q" type="search" enterkeyhint="search" placeholder="Search hymn words…" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="clr" id="qclr" type="button" aria-label="Clear">×</button></div>
+    <div class="results" id="results"></div>
     <div class="display empty" id="disp">Hymn number</div>
     <div class="hint" id="hint"></div>
     <div class="pad" id="pad">
@@ -105,7 +122,7 @@ async function openPdf(blob){
 $('file').addEventListener('change',async e=>{
   const f=e.target.files[0]; if(!f) return;
   $('setupMsg').textContent='Loading…';
-  try{ pdf=await openPdf(f); await saveBlob(f); $('setupMsg').textContent=''; reset(); show('find'); }
+  try{ pdf=await openPdf(f); await saveBlob(f); $('setupMsg').textContent=''; wordsState='none'; reset(); show('find'); loadWords(); }
   catch(err){ $('setupMsg').textContent=err.message||'Could not open that file.'; }
   e.target.value='';
 });
@@ -129,6 +146,7 @@ function press(k){
 $('pad').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;press(b.dataset.k||b.textContent.trim());});
 document.addEventListener('keydown',e=>{
   if(!$('find').classList.contains('on'))return;
+  if(e.target&&e.target.tagName==='INPUT')return;
   if(/^[0-9]$/.test(e.key))press(e.key);
   else if(e.key==='Backspace')press('del');
   else if(e.key==='Enter')press('go');
@@ -199,6 +217,85 @@ $('backBtn').onclick=()=>{token++;reset();show('find');try{history.replaceState(
 $('prevH').onclick=()=>{if(current>1)openHymn(current-1)};
 $('nextH').onclick=()=>{if(current<TOTAL)openHymn(current+1)};
 
+
+// ---- word search (index unlocks only with the Green Book PDF) ----
+let WORDS=null, IDX=null, wordsState='none';
+const ELIDE={"o'er":"over","e'er":"ever","ne'er":"never","e'en":"even","whate'er":"whatever","where'er":"wherever","howe'er":"however","whene'er":"whenever"};
+function normWords(str){
+  str=str.toLowerCase().replace(/[’‘`]/g,"'");
+  const out=[];
+  for(let w of str.split(/[^a-z0-9']+/)){
+    w=w.replace(/^'+|'+$/g,''); if(!w) continue;
+    if(ELIDE[w]){out.push(ELIDE[w]);continue;}
+    if(/[a-z]'[a-z]/.test(w)) out.push(w.replace(/'/g,'e'));   // ev'ry -> every, heav'n -> heaven
+    else out.push(w.replace(/'/g,''));
+  }
+  return out;
+}
+async function bookKey(doc){
+  const p=await doc.getPage(1); const tc=await p.getTextContent();
+  const src=tc.items.map(i=>i.str).join('|')+'#'+doc.numPages;
+  const h=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(src));
+  return crypto.subtle.importKey('raw',h,'AES-GCM',false,['decrypt']);
+}
+async function loadWords(){
+  if(!pdf||wordsState==='ready'||wordsState==='loading') return;
+  wordsState='loading';
+  try{
+    const buf=await (await fetch('words.bin')).arrayBuffer();
+    const key=await bookKey(pdf);
+    const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(buf,0,12)},key,new Uint8Array(buf,12));
+    const ds=new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'));
+    WORDS=JSON.parse(await new Response(ds).text());
+    IDX=WORDS.map(lines=>{const lt=lines.map(normWords);const all=[].concat(...lt);return {lt,set:new Set(all),joined:' '+all.join(' ')+' '};});
+    wordsState='ready';
+  }catch(e){wordsState='fail';}
+  if($('q').value.trim()) runSearch();
+}
+function near(a,b){ // edit distance <= 1
+  if(Math.abs(a.length-b.length)>1) return false;
+  let i=0,j=0,d=0;
+  while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue;} if(++d>1)return false; if(a.length>b.length)i++; else if(b.length>a.length)j++; else{i++;j++;}}
+  return d+(a.length-i)+(b.length-j)<=1;
+}
+function tokMatch(q,set,last){
+  if(set.has(q)) return 2;
+  for(const w of set){ if(last&&q.length>=2&&w.startsWith(q)) return 1.5; if(q.length>=5&&near(q,w)) return 1; }
+  return 0;
+}
+function esc(t){return t.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function highlight(line,qs){
+  return line.split(/(\s+)/).map(w=>{const n=normWords(w)[0];return n&&qs.some(q=>n===q||n.startsWith(q)&&q.length>=2||(q.length>=5&&near(q,n)))?'<mark>'+esc(w)+'</mark>':esc(w);}).join('');
+}
+function runSearch(){
+  const raw=$('q').value, box=$('results'), wrap=$('findWrap');
+  const qs=normWords(raw);
+  wrap.classList.toggle('searching',raw.trim().length>0);
+  if(!raw.trim()){box.innerHTML='';return;}
+  if(/^\d{1,3}$/.test(raw.trim())){const n=+raw.trim();box.innerHTML=(n>=1&&n<=TOTAL)?`<button class="res" data-n="${n}"><span class="num">${n}</span><span class="ln">Open hymn ${n}</span></button>`:'<div class="rmsg">Hymns run from 1 to '+TOTAL+'.</div>';return;}
+  if(wordsState!=='ready'){box.innerHTML='<div class="rmsg">'+(wordsState==='fail'?'Word search only works with the Green Book PDF this app was made for.':'Getting the words ready…')+'</div>';if(wordsState==='none')loadWords();return;}
+  if(!qs.length){box.innerHTML='';return;}
+  const phrase=' '+qs.join(' ');
+  const res=[];
+  IDX.forEach((h,i)=>{
+    let sc=0;
+    for(let k=0;k<qs.length;k++){const m=tokMatch(qs[k],h.set,k===qs.length-1);if(!m)return;sc+=m;}
+    if(h.joined.includes(phrase+' ')||h.joined.includes(phrase)) sc+=20;
+    let best=0,bl=0;
+    h.lt.forEach((lt,li)=>{let c=0;for(const q of qs){if(lt.some(w=>w===q||(q.length>=2&&w.startsWith(q))||(q.length>=5&&near(q,w))))c++;} if(lt.join(' ').includes(qs.join(' ')))c+=qs.length; if(c>best){best=c;bl=li;}});
+    sc+=best;
+    res.push({n:i+1,sc,line:WORDS[i][bl]||''});
+  });
+  res.sort((a,b)=>b.sc-a.sc||a.n-b.n);
+  if(!res.length){box.innerHTML='<div class="rmsg">No hymns found. Try fewer or different words.</div>';return;}
+  box.innerHTML=res.slice(0,40).map(r=>`<button class="res" data-n="${r.n}"><span class="num">${r.n}</span><span class="ln">${highlight(r.line,qs)}</span></button>`).join('')+(res.length>40?'<div class="rmsg">Showing the best 40. Add more words to narrow it down.</div>':'');
+}
+let sT=null;
+$('q').addEventListener('input',()=>{clearTimeout(sT);sT=setTimeout(runSearch,120);});
+$('q').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('q').blur();}});
+$('qclr').onclick=()=>{$('q').value='';runSearch();$('q').focus();};
+$('results').addEventListener('click',e=>{const b=e.target.closest('.res');if(b){$('q').blur();openHymn(+b.dataset.n);}});
+
 // ---- start ----
 if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}
@@ -206,6 +303,7 @@ try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}c
   const b=await loadBlob();
   if(b){try{pdf=await openPdf(b);}catch(e){pdf=null}}
   if(!pdf){show('setup');return;}
+  loadWords();
   const m=/^#h(\d+)$/.exec(location.hash);
   if(m&&+m[1]>=1&&+m[1]<=TOTAL)openHymn(+m[1]); else {reset();show('find');}
 })();
