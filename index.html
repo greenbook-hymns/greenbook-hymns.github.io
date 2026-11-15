@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, viewport-fit=cover, initial-scale=1, maximum-scale=8, user-scalable=yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Green Book">
+<meta name="theme-color" content="#1f4d33">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Green Book Hymn Finder</title>
+<script src="pdf.min.js"></script>
+<script src="pdf.worker.min.js"></script>
+<style>
+:root{--g:#1f4d33;--g2:#2e6b48;--bg:#f4f1ea;--ink:#1b1b1b;--mut:#6b6b6b}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.screen{display:none;min-height:100%;flex-direction:column}
+.screen.on{display:flex}
+header{background:var(--g);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}
+header h1{font-size:18px;margin:0;font-weight:600;flex:1}
+header button{background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:15px}
+.wrap{flex:1;display:flex;flex-direction:column;align-items:center;padding:20px 16px;gap:16px;max-width:420px;width:100%;margin:0 auto}
+.display{width:100%;background:#fff;border:2px solid var(--g);border-radius:14px;font-size:56px;font-weight:700;text-align:center;padding:10px;min-height:88px;letter-spacing:2px;color:var(--g)}
+.display.empty{color:#c4c4c4;font-weight:400;font-size:28px;line-height:64px;letter-spacing:0}
+.hint{color:var(--mut);font-size:14px;min-height:18px;text-align:center}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%}
+.pad button{font-size:28px;padding:16px 0;border-radius:12px;border:0;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.15);color:var(--ink)}
+.pad button:active{background:#e6e1d6}
+.pad .go{background:var(--g);color:#fff;font-weight:700}
+.pad .go:active{background:var(--g2)}
+.setup p{line-height:1.5;margin:0}
+.big{display:block;width:100%;text-align:center;background:var(--g);color:#fff;border-radius:12px;padding:16px;font-size:18px;font-weight:600}
+input[type=file]{display:none}
+.viewer{background:#fff}
+.pages{flex:1;background:#fff}
+.pages canvas{display:block;width:100%;height:auto}
+.pages canvas+canvas{border-top:1px solid #e3e3e3}
+.msg{padding:30px 16px;text-align:center;color:var(--mut)}
+.ctl{position:fixed;left:0;right:0;display:flex;gap:10px;padding:10px 12px;pointer-events:none;transition:opacity .25s;z-index:5}
+.ctl.top{top:0;padding-top:max(10px,env(safe-area-inset-top))}
+.ctl.bot{bottom:0;padding-bottom:max(10px,env(safe-area-inset-bottom))}
+.ctl button{pointer-events:auto;border:0;border-radius:22px;padding:10px 16px;font-size:16px;background:rgba(31,77,51,.88);color:#fff;box-shadow:0 2px 6px rgba(0,0,0,.25)}
+.ctl .t{pointer-events:none;margin-left:auto;background:rgba(31,77,51,.88);color:#fff;border-radius:22px;padding:10px 16px;font-size:16px;font-weight:600}
+.ctl.bot button{flex:1}
+.ctl button:disabled{opacity:.35}
+.hide .ctl{opacity:0}.hide .ctl button{pointer-events:none}
+.small{font-size:13px;color:var(--mut);text-align:center}
+.small a{color:var(--g2)}
+</style>
+</head>
+<body>
+<section id="setup" class="screen setup">
+  <header><h1>Green Book Hymn Finder</h1></header>
+  <div class="wrap">
+    <p><b>One-time setup.</b> Choose your PDF copy of the Christadelphian Hymn Book (the Green Book). It stays on this phone, so you only do this once.</p>
+    <label class="big" for="file">Choose the Green Book PDF</label>
+    <input type="file" id="file" accept="application/pdf,.pdf">
+    <div class="hint" id="setupMsg"></div>
+    <p class="small">Tip: after setup, use your browser's <b>Share → Add to Home Screen</b> to put it on your home screen.</p>
+  </div>
+</section>
+
+<section id="find" class="screen">
+  <header><h1>Green Book</h1><button id="changeBtn" type="button">PDF</button></header>
+  <div class="wrap">
+    <div class="display empty" id="disp">Hymn number</div>
+    <div class="hint" id="hint"></div>
+    <div class="pad" id="pad">
+      <button>1</button><button>2</button><button>3</button>
+      <button>4</button><button>5</button><button>6</button>
+      <button>7</button><button>8</button><button>9</button>
+      <button data-k="del">⌫</button><button>0</button><button data-k="go" class="go">Go</button>
+    </div>
+  </div>
+</section>
+
+<section id="view" class="screen viewer">
+  <div class="pages" id="pages"></div>
+  <div class="ctl top"><button id="backBtn" type="button">‹ Back</button><span class="t" id="vTitle">Hymn</span></div>
+  <div class="ctl bot"><button id="prevH" type="button">‹ Prev hymn</button><button id="nextH" type="button">Next hymn ›</button></div>
+</section>
+
+<script>
+const MAP=[4, 5, 7, 10, 11, 12, 13, 15, 16, 17, 20, 21, 22, 23, 24, 26, 28, 29, 31, 32, 33, 34, 35, 36, 38, 39, 40, 41, 44, 45, 47, 48, 49, 50, 52, 53, 55, 58, 59, 60, 61, 62, 63, 65, 67, 68, 69, 70, 72, 73, 74, 75, 76, 77, 78, 79, 80, 82, 83, 84, 85, 86, 90, 92, 93, 94, 95, 96, 98, 99, 100, 101, 103, 104, 106, 107, 109, 111, 113, 114, 115, 117, 119, 121, 123, 125, 126, 127, 129, 131, 132, 133, 134, 137, 138, 141, 142, 143, 145, 147, 149, 151, 152, 153, 155, 157, 159, 160, 161, 163, 165, 166, 167, 169, 170, 171, 174, 175, 176, 177, 179, 181, 183, 184, 185, 187, 188, 191, 193, 195, 196, 197, 199, 200, 203, 205, 206, 207, 208, 209, 213, 214, 215, 217, 219, 220, 221, 223, 224, 225, 227, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 240, 241, 243, 244, 245, 246, 247, 248, 249, 253, 254, 255, 257, 258, 259, 261, 262, 263, 264, 265, 267, 268, 271, 272, 273, 274, 275, 277, 279, 280, 281, 282, 283, 285, 287, 289, 291, 292, 293, 294, 295, 297, 298, 299, 301, 302, 303, 304, 307, 309, 310, 311, 313, 314, 315, 316, 317, 318, 319, 320, 321, 323, 324, 325, 326, 327, 329, 331, 332, 333, 334, 335, 336, 337, 338, 339, 341, 342, 343, 345, 346, 347, 348, 349, 351, 353, 355, 357, 358, 359, 360, 361, 363, 364, 365, 367, 369, 370, 371, 373, 374, 375, 376, 377, 379, 380, 381, 383, 385, 387, 388, 389, 391, 393, 395, 396, 397, 399, 401, 402, 403, 404, 408, 409, 411, 413, 414, 415, 417, 421, 423, 424, 425, 427, 429, 431, 432, 433, 436, 437, 439, 440, 441, 442, 443, 444, 447, 451, 455, 456, 457, 458, 459, 461, 462, 463, 465, 466, 467, 469, 470, 471, 472, 473, 476, 479, 483, 486, 487, 489, 490, 491, 492, 493, 495, 496, 497, 499, 502, 503, 504, 505, 506, 507, 509, 510, 511, 512, 513, 515, 516, 517, 518, 519, 521, 523, 524, 525, 526, 529, 531, 532, 533, 535, 536, 537, 540, 541, 543, 544, 545, 547, 550, 551, 552, 553, 555, 556, 557, 559, 560, 561, 563, 565, 567, 569, 570, 571, 573, 574, 575, 576, 577, 580, 581, 582, 583, 584, 585, 587, 588, 589, 591, 592, 593, 594, 595, 596, 597, 598, 599, 600, 601, 603, 604, 605, 606, 607, 608, 609, 611, 612, 613, 614, 615, 617, 618, 619, 621, 623, 624, 625, 626, 627, 629, 631, 632];const END=633;
+const TOTAL=MAP.length;
+let pdf=null, entry="", current=0, token=0;
+const $=id=>document.getElementById(id);
+function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('on',s.id===id));}
+
+// ---- storage (IndexedDB, optional) ----
+function idb(){return new Promise((res,rej)=>{try{const r=indexedDB.open('greenbook',1);r.onupgradeneeded=()=>r.result.createObjectStore('f');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}catch(e){rej(e)}});}
+async function saveBlob(b){try{const db=await idb();await new Promise((res,rej)=>{const t=db.transaction('f','readwrite');t.objectStore('f').put(b,'pdf');t.oncomplete=res;t.onerror=()=>rej(t.error);});}catch(e){}}
+async function loadBlob(){try{const db=await idb();return await new Promise((res)=>{const t=db.transaction('f');const q=t.objectStore('f').get('pdf');q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null);});}catch(e){return null}}
+
+async function openPdf(blob){
+  const buf=await blob.arrayBuffer();
+  const doc=await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
+  if(doc.numPages<END){throw new Error('This PDF only has '+doc.numPages+' pages — it doesn\'t look like the Green Book scan.');}
+  return doc;
+}
+
+$('file').addEventListener('change',async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  $('setupMsg').textContent='Loading…';
+  try{ pdf=await openPdf(f); await saveBlob(f); $('setupMsg').textContent=''; reset(); show('find'); }
+  catch(err){ $('setupMsg').textContent=err.message||'Could not open that file.'; }
+  e.target.value='';
+});
+$('changeBtn').onclick=()=>show('setup');
+
+// ---- keypad ----
+function reset(){entry="";paint();}
+function paint(){
+  const d=$('disp');
+  if(entry){d.textContent=entry;d.classList.remove('empty');}
+  else{d.textContent='Hymn number';d.classList.add('empty');}
+  $('hint').textContent='';
+}
+function press(k){
+  if(k==='del'){entry=entry.slice(0,-1);paint();return;}
+  if(k==='go'){go();return;}
+  if(entry.length>=3) return;
+  if(entry===''&&k==='0') return;
+  entry+=k; paint();
+}
+$('pad').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;press(b.dataset.k||b.textContent.trim());});
+document.addEventListener('keydown',e=>{
+  if(!$('find').classList.contains('on'))return;
+  if(/^[0-9]$/.test(e.key))press(e.key);
+  else if(e.key==='Backspace')press('del');
+  else if(e.key==='Enter')press('go');
+});
+function go(){
+  const n=parseInt(entry,10);
+  if(!n||n<1||n>TOTAL){$('hint').textContent='Hymns run from 1 to '+TOTAL+'.';return;}
+  openHymn(n);
+}
+
+// ---- viewer ----
+async function openHymn(n){
+  current=n; const my=++token;
+  $('vTitle').textContent='Hymn '+n;
+  $('prevH').disabled=n<=1; $('nextH').disabled=n>=TOTAL;
+  const box=$('pages'); box.innerHTML='<div class="msg">Loading…</div>'; window.scrollTo(0,0);
+  show('view'); flash();
+  if(location.hash!=='#h'+n){try{history.replaceState(null,'','#h'+n)}catch(e){}}
+  const from=MAP[n-1], to=(n<TOTAL?MAP[n]:END)-1;
+  const w=window.innerWidth, dpr=Math.min(window.devicePixelRatio||1,3), q=Math.max(dpr*2.5,3);
+  let first=true;
+  for(let p=from;p<=to;p++){
+    const page=await pdf.getPage(p); if(my!==token) return;
+    const v1=page.getViewport({scale:1}); const s=Math.min((w*q)/v1.width, 3200/v1.width);
+    const vp=page.getViewport({scale:s});
+    const c=document.createElement('canvas'); c.width=Math.floor(vp.width); c.height=Math.floor(vp.height);
+    const ctx=c.getContext('2d');
+    await page.render({canvasContext:ctx,viewport:vp}).promise; if(my!==token) return;
+    const out=crop(c);
+    if(first){box.innerHTML='';first=false;}
+    out._frac=out._frac||1; box.appendChild(out);
+    const cs=[...box.querySelectorAll('canvas')], mx=Math.max(...cs.map(x=>x._frac));
+    cs.forEach(x=>{x.style.width=(x._frac/mx*100)+'%';x.style.margin='0 auto';});
+  }
+  flash();
+}
+// trim the white margins of a scanned page
+function crop(c){
+  const W=c.width,H=c.height,ctx=c.getContext('2d');
+  const step=Math.max(1,Math.floor(W/600));
+  const sw=Math.floor(W/step),sh=Math.floor(H/step);
+  const sm=document.createElement('canvas');sm.width=sw;sm.height=sh;
+  const sx=sm.getContext('2d');sx.drawImage(c,0,0,sw,sh);
+  const d=sx.getImageData(0,0,sw,sh).data;
+  const rows=new Uint16Array(sh),cols=new Uint16Array(sw);
+  for(let y=0;y<sh;y++)for(let x=0;x<sw;x++){const i=(y*sw+x)*4;if(d[i]+d[i+1]+d[i+2]<480){rows[y]++;cols[x]++;}}
+  const minR=Math.max(2,sw*0.004),minC=Math.max(2,sh*0.004);
+  // ignore a thin dark band hugging the scan edge (scanner shadow)
+  const edge=Math.round(Math.min(sw,sh)*0.012);
+  let t=edge;while(t<sh&&rows[t]<minR)t++;
+  let b=sh-1-edge;while(b>t&&rows[b]<minR)b--;
+  let l=edge;while(l<sw&&cols[l]<minC)l++;
+  let r=sw-1-edge;while(r>l&&cols[r]<minC)r--;
+  if(r-l<sw*0.3||b-t<sh*0.2)return c;
+  const pad=Math.round(sw*0.015);
+  l=Math.max(0,l-pad);r=Math.min(sw-1,r+pad);t=Math.max(0,t-pad);b=Math.min(sh-1,b+pad);
+  const X=l*step,Y=t*step,CW=Math.min(W-X,(r-l+1)*step),CH=Math.min(H-Y,(b-t+1)*step);
+  const o=document.createElement('canvas');o.width=CW;o.height=CH;
+  o.getContext('2d').drawImage(c,X,Y,CW,CH,0,0,CW,CH);
+  o._frac=CW/W;
+  return o;
+}
+// controls fade away so the hymn fills the screen; tap to bring them back
+let hideT=null;
+function flash(){const v=$('view');v.classList.remove('hide');clearTimeout(hideT);hideT=setTimeout(()=>v.classList.add('hide'),2500);}
+$('pages').addEventListener('click',()=>{const v=$('view');if(v.classList.contains('hide'))flash();else{clearTimeout(hideT);v.classList.add('hide');}});
+$('backBtn').onclick=()=>{token++;reset();show('find');try{history.replaceState(null,'',location.pathname+location.search)}catch(e){}};
+$('prevH').onclick=()=>{if(current>1)openHymn(current-1)};
+$('nextH').onclick=()=>{if(current<TOTAL)openHymn(current+1)};
+
+// ---- start ----
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}
+(async()=>{
+  const b=await loadBlob();
+  if(b){try{pdf=await openPdf(b);}catch(e){pdf=null}}
+  if(!pdf){show('setup');return;}
+  const m=/^#h(\d+)$/.exec(location.hash);
+  if(m&&+m[1]>=1&&+m[1]<=TOTAL)openHymn(+m[1]); else {reset();show('find');}
+})();
+</script>
+</body>
+</html>
