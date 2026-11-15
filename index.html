@@ -91,6 +91,7 @@ input[type=file]{display:none}
       <button>7</button><button>8</button><button>9</button>
       <button data-k="del">⌫</button><button>0</button><button data-k="go" class="go">Go</button>
     </div>
+    <div class="small" id="ver">Version 5</div>
   </div>
 </section>
 
@@ -297,7 +298,8 @@ $('qclr').onclick=()=>{$('q').value='';runSearch();$('q').focus();};
 $('results').addEventListener('click',e=>{const b=e.target.closest('.res');if(b){$('q').blur();openHymn(+b.dataset.n);}});
 
 // ---- start ----
-if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}
+if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(r=>{try{r.update()}catch(e){}}).catch(()=>{});
+  let reloaded=false;navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reloaded)return;reloaded=true;location.reload();});}
 try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist();}catch(e){}
 (async()=>{
   const b=await loadBlob();
